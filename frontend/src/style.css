@@ -1,0 +1,151 @@
+/* style.css — AEGIS Virtual Human */
+
+/* --- GLOBAL RESET & THEME --- */
+body {
+  margin: 0;
+  padding: 0;
+  background-color: #0a0a0e;
+  color: white;
+  font-family: 'Inter', 'Segoe UI', sans-serif;
+  overflow: hidden;
+}
+
+/* --- MAIN LAYOUT --- */
+.App {
+  position: relative;
+  width: 100vw;
+  height: 100vh;
+  overflow: hidden;
+}
+
+/* --- 3D AVATAR CANVAS --- */
+.avatar-canvas-wrapper {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  z-index: 1;
+}
+
+.avatar-canvas-wrapper canvas {
+  display: block;
+}
+
+/* --- UI OVERLAY --- */
+.ui-layer {
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  z-index: 10;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+  padding-bottom: 40px;
+  pointer-events: none;
+  background: linear-gradient(transparent, rgba(0, 0, 0, 0.7));
+}
+
+.status-box {
+  pointer-events: auto;
+}
+
+.status-text {
+  font-size: 1.1rem;
+  font-weight: 600;
+  color: #00ffcc;
+  text-shadow: 0 0 12px rgba(0, 255, 204, 0.5);
+  background: rgba(10, 10, 14, 0.7);
+  backdrop-filter: blur(10px);
+  padding: 8px 24px;
+  border-radius: 20px;
+  border: 1px solid rgba(0, 255, 204, 0.2);
+  margin: 0;
+}
+
+/* --- CAPTION BOX --- */
+.caption-box {
+  max-width: 600px;
+  padding: 10px 24px;
+  background: rgba(10, 10, 14, 0.75);
+  backdrop-filter: blur(10px);
+  border-radius: 12px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.caption-text {
+  margin: 0;
+  font-size: 1rem;
+  color: #e0e0e0;
+  line-height: 1.5;
+  text-align: center;
+}
+
+/* --- INSTRUCTION BAR --- */
+.instruction-box {
+  padding: 6px 16px;
+}
+
+.instruction-text {
+  color: #00ffcc;
+  font-size: 0.75rem;
+  letter-spacing: 3px;
+  text-transform: uppercase;
+  opacity: 0.6;
+  animation: breathe 3s infinite ease-in-out;
+  margin: 0;
+}
+
+/* --- START SCREEN --- */
+.start-overlay {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100vw;
+  height: 100vh;
+  background: rgba(0, 0, 0, 0.92);
+  z-index: 999;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  cursor: pointer;
+  backdrop-filter: blur(8px);
+}
+
+.start-button {
+  padding: 20px 50px;
+  border: 2px solid #00ffcc;
+  color: #00ffcc;
+  font-size: 18px;
+  font-family: 'Inter', 'Segoe UI', sans-serif;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 5px;
+  background: rgba(0, 255, 204, 0.08);
+  box-shadow: 0 0 40px rgba(0, 255, 204, 0.15);
+  transition: all 0.3s ease;
+  cursor: pointer;
+  border-radius: 4px;
+}
+
+.start-button:hover {
+  background: #00ffcc;
+  color: #0a0a0e;
+  box-shadow: 0 0 60px #00ffcc;
+  transform: scale(1.05);
+}
+
+/* --- DEBUG TEXT --- */
+.debug-subtext {
+  color: rgba(255, 255, 255, 0.4);
+  font-size: 0.8rem;
+  margin: 0;
+}
+
+/* --- ANIMATIONS --- */
+@keyframes breathe {
+  0%, 100% { opacity: 0.3; }
+  50% { opacity: 0.8; }
+}

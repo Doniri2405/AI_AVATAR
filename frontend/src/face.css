@@ -1,0 +1,94 @@
+/* face.css */
+
+.aegis-head {
+  position: relative;
+  width: 320px;
+  height: 380px;
+  background: rgba(10, 10, 15, 0.9);
+  border-radius: 110px 110px 140px 140px;
+  border: 2px solid rgba(0, 255, 204, 0.4);
+  backdrop-filter: blur(15px);
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  box-shadow: 0 0 40px rgba(0, 255, 204, 0.1);
+  z-index: 5;
+}
+
+.face-plate {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center; /* Centers the eyes/mouth group vertically */
+}
+
+/* EYES SECTION */
+.eyes-container {
+  display: flex;
+  gap: 60px;
+  margin-bottom: 40px; /* Space between eyes and mouth */
+}
+
+.eye-socket {
+  width: 65px;
+  height: 65px;
+  background: rgba(0, 0, 0, 0.5);
+  border-radius: 50%;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  position: relative;
+  border: 1px solid rgba(0, 255, 204, 0.3);
+  box-shadow: inset 0 0 15px rgba(0, 0, 0, 0.8);
+}
+
+.pupil {
+  width: 35px;
+  height: 35px;
+  background: #00ffcc;
+  border-radius: 50%;
+  box-shadow: 0 0 20px #00ffcc, 0 0 40px rgba(0, 255, 204, 0.4);
+  z-index: 2;
+}
+
+.eye-glow {
+  position: absolute;
+  width: 100%;
+  height: 100%;
+  border-radius: 50%;
+  background: radial-gradient(circle, rgba(0, 255, 204, 0.15) 0%, transparent 70%);
+  animation: breathe-glow 3s infinite;
+}
+
+/* MOUTH SECTION - PERFECTLY CENTERED */
+.mouth-area {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  width: 100%;
+  height: 60px; /* Fixed height container to prevent shifting */
+}
+
+.mouth-bar {
+  background: #00ffcc;
+  box-shadow: 0 0 15px #00ffcc, 0 0 30px rgba(0, 255, 204, 0.3);
+  transition: all 0.1s ease-out;
+}
+
+/* ANIMATIONS */
+@keyframes breathe-glow {
+  0%, 100% { opacity: 0.2; transform: scale(1); }
+  50% { opacity: 0.5; transform: scale(1.1); }
+}
+
+.aegis-head.idle .pupil {
+  animation: human-blink 5s infinite;
+}
+
+@keyframes human-blink {
+  0%, 90%, 100% { transform: scaleY(1); }
+  95% { transform: scaleY(0.01); }
+}
