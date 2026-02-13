@@ -15,7 +15,7 @@ This repository contains the consolidated, high-performance core of the AEGIS sy
 ### Prerequisites
 - Node.js & npm
 - Python 3.10+
-- Groq API Key (in `.env`)
+- Groq API Key (rename `.env.example` to `.env` and add your key)
 
 ### Frontend
 ```bash
