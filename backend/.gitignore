@@ -1,0 +1,14 @@
+# Security
+.env
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+venv/
+.venv/
+
+# Django
+db.sqlite3
+local_settings.py
+*.log
