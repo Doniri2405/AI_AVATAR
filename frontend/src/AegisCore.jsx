@@ -1,261 +1,187 @@
-import React, { useState, useRef, useEffect, useCallback, Suspense, useMemo, forwardRef, useImperativeHandle } from "react";
-import { Canvas, useFrame, useThree } from "@react-three/fiber";
-import { OrbitControls, Environment as DreiEnvironment, ContactShadows, useGLTF } from "@react-three/drei";
-import { Physics, usePlane } from "@react-three/cannon";
+import React, { useState, useRef, useEffect, useCallback, useMemo } from "react";
+import { useFrame, useThree } from "@react-three/fiber";
+import { Html } from "@react-three/drei";
 import * as THREE from "three";
-import { MathUtils } from "three";
 import "./style.css";
 
 // ── CONFIGURATION ─────────────────────────────────────────────
 const WS_URL = "ws://127.0.0.1:8000/ws/chat/";
-const MODEL_URL = "/avatar.glb";
 const HEARTBEAT_MS = 10000;
-const VISUAL_FRAME_MS = 3000;
-const IDLE_TIMEOUT_MS = 20000;
+const IDLE_TIMEOUT_MS = 15000; // 15s idle timer as requested
+const MOVEMENT_BOUNDS = { x: [-3, 3], y: [-1, 1], z: [-2, 2] };
 
-const HDR_MAP = {
-    space: "https://dl.polyhaven.org/file/ph-assets/HDRIs/hdr/4k/shanghai_bund_4k.hdr",
-    cyberpunk: "https://dl.polyhaven.org/file/ph-assets/HDRIs/hdr/4k/shanghai_bund_4k.hdr",
-    city: "https://dl.polyhaven.org/file/ph-assets/HDRIs/hdr/4k/shanghai_bund_4k.hdr",
-    night: "https://dl.polyhaven.org/file/ph-assets/HDRIs/hdr/4k/shanghai_bund_4k.hdr",
-    neon: "https://dl.polyhaven.org/file/ph-assets/HDRIs/hdr/4k/shanghai_bund_4k.hdr",
-    shanghai: "https://dl.polyhaven.org/file/ph-assets/HDRIs/hdr/4k/shanghai_bund_4k.hdr",
-    forest: "https://dl.polyhaven.org/file/ph-assets/HDRIs/hdr/4k/forest_slope_4k.hdr",
-    nature: "https://dl.polyhaven.org/file/ph-assets/HDRIs/hdr/4k/forest_slope_4k.hdr",
-    garden: "https://dl.polyhaven.org/file/ph-assets/HDRIs/hdr/4k/forest_slope_4k.hdr",
-    office: "https://dl.polyhaven.org/file/ph-assets/HDRIs/hdr/4k/industrial_sunset_02_4k.hdr",
-    sunset: "https://dl.polyhaven.org/file/ph-assets/HDRIs/hdr/4k/industrial_sunset_02_4k.hdr",
-};
+// ── FLUID SPHERE COMPONENT (Shader-Driven) ────────────────────
+function FluidSphere({ audioLevelRef, targetPos }) {
+    const mesh = useRef();
 
-// ── SUB-COMPONENT: PHYSICS FLOOR ──────────────────────────────
-function PhysicsFloor() {
-    usePlane(() => ({
-        rotation: [-Math.PI / 2, 0, 0],
-        position: [0, -1, 0],
-        type: "Static",
-    }));
+    // Shader Material defined once
+    const material = useMemo(() => new THREE.ShaderMaterial({
+        uniforms: {
+            uTime: { value: 0 },
+            uAudio: { value: 0 }
+        },
+        vertexShader: `
+            uniform float uTime;
+            uniform float uAudio;
+            varying vec3 vNormal;
+            
+            // Simplex-like noise function
+            vec3 mod289(vec3 x) { return x - floor(x * (1.0 / 289.0)) * 289.0; }
+            vec4 mod289(vec4 x) { return x - floor(x * (1.0 / 289.0)) * 289.0; }
+            vec4 permute(vec4 x) { return mod289(((x*34.0)+1.0)*x); }
+            vec4 taylorInvSqrt(vec4 r) { return 1.79284291400159 - 0.85373472095314 * r; }
+            
+            float snoise(vec3 v) {
+                const vec2 C = vec2(1.0/6.0, 1.0/3.0);
+                const vec4 D = vec4(0.0, 0.5, 1.0, 2.0);
+                
+                // First corner
+                vec3 i  = floor(v + dot(v, C.yyy));
+                vec3 x0 = v - i + dot(i, C.xxx);
+                
+                // Other corners
+                vec3 g = step(x0.yzx, x0.xyz);
+                vec3 l = 1.0 - g;
+                vec3 i1 = min( g.xyz, l.zxy );
+                vec3 i2 = max( g.xyz, l.zxy );
+                
+                vec3 x1 = x0 - i1 + C.xxx;
+                vec3 x2 = x0 - i2 + C.yyy;
+                vec3 x3 = x0 - D.yyy;
+                
+                // Permutations
+                i = mod289(i);
+                vec4 p = permute( permute( permute(
+                         i.z + vec4(0.0, i1.z, i2.z, 1.0))
+                       + i.y + vec4(0.0, i1.y, i2.y, 1.0))
+                       + i.x + vec4(0.0, i1.x, i2.x, 1.0));
+                       
+                // Gradients
+                float n_ = 0.142857142857;
+                vec3  ns = n_ * D.wyz - D.xzx;
+                vec4 j = p - 49.0 * floor(p * ns.z * ns.z);
+                
+                vec4 x_ = floor(j * ns.z);
+                vec4 y_ = floor(j - 7.0 * x_);
+                
+                vec4 x = x_ *ns.x + ns.yyyy;
+                vec4 y = y_ *ns.x + ns.yyyy;
+                vec4 h = 1.0 - abs(x) - abs(y);
+                
+                vec4 b0 = vec4( x.xy, y.xy );
+                vec4 b1 = vec4( x.zw, y.zw );
+                
+                vec4 s0 = floor(b0)*2.0 + 1.0;
+                vec4 s1 = floor(b1)*2.0 + 1.0;
+                vec4 sh = -step(h, vec4(0.0));
+                
+                vec4 a0 = b0.xzyw + s0.xzyw*sh.xxyy;
+                vec4 a1 = b1.xzyw + s1.xzyw*sh.zzww;
+                
+                vec3 p0 = vec3(a0.xy,h.x);
+                vec3 p1 = vec3(a0.zw,h.y);
+                vec3 p2 = vec3(a1.xy,h.z);
+                vec3 p3 = vec3(a1.zw,h.w);
+                
+                // Normalise gradients
+                vec4 norm = taylorInvSqrt(vec4(dot(p0,p0), dot(p1,p1), dot(p2, p2), dot(p3,p3)));
+                p0 *= norm.x;
+                p1 *= norm.y;
+                p2 *= norm.z;
+                p3 *= norm.w;
+                
+                // Mix final noise value
+                vec4 m = max(0.6 - vec4(dot(x0,x0), dot(x1,x1), dot(x2,x2), dot(x3,x3)), 0.0);
+                m = m * m;
+                return 42.0 * dot( m*m, vec4( dot(p0,x0), dot(p1,x1), dot(p2,x2), dot(p3,x3) ) );
+            }
+
+            void main() {
+                vNormal = normal;
+                vec3 pos = position;
+                
+                // Noise based on time + audio
+                float n = snoise(pos * 1.5 + uTime * 0.5); 
+                
+                // "Breathing Cycle": Layer slow sine wave (0.5Hz) on top of audio
+                float breath = sin(uTime * 3.14159) * 0.03; 
+                
+                // Distortion: Base breath + Audio spike effect
+                float distortion = n * (0.1 + uAudio * 1.5) + breath;
+                
+                pos += normal * distortion;
+                
+                gl_Position = projectionMatrix * modelViewMatrix * vec4(pos, 1.0);
+            }
+        `,
+        fragmentShader: `
+            varying vec3 vNormal;
+            
+            void main() {
+                // Tech Green Aesthetic
+                vec3 baseColor = vec3(0.01, 0.15, 0.08);
+                vec3 highlightColor = vec3(0.2, 1.0, 0.6);
+                
+                // Fresnel for glowing edge
+                vec3 viewDir = vec3(0.0, 0.0, 1.0); // Simplified view direction
+                float fresnel = pow(1.0 - dot(normalize(vNormal), viewDir), 2.5);
+                
+                vec3 color = mix(baseColor, highlightColor, fresnel * 0.9);
+                
+                gl_FragColor = vec4(color, 1.0);
+            }
+        `,
+        transparent: true
+    }), []);
+
+    useFrame((state) => {
+        // 1. Update Uniforms
+        material.uniforms.uTime.value = state.clock.elapsedTime;
+        // Use ref value directly for smooth updates
+        material.uniforms.uAudio.value = THREE.MathUtils.lerp(material.uniforms.uAudio.value, audioLevelRef.current, 0.15);
+
+        // 2. Movement Lerp (No React State Updates)
+        if (mesh.current) {
+            mesh.current.position.lerp(targetPos.current, 0.05); // "Glide" factor
+            mesh.current.rotation.y += 0.003 + (audioLevelRef.current * 0.02); // Dynamic spin
+
+            // Biological Breathing (Scale Pulse)
+            const breath = Math.sin(state.clock.elapsedTime * 3.14159) * 0.005; // 0.5Hz approx (PI radians/sec)
+            const scale = 1.0 + breath + (audioLevelRef.current * 0.1); // Base breath + audio pop
+            mesh.current.scale.setScalar(scale);
+        }
+    });
+
     return (
-        <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, -1.001, 0]} receiveShadow>
-            <planeGeometry args={[20, 20]} />
-            <meshStandardMaterial color="#111118" roughness={0.8} />
+        <mesh ref={mesh} castShadow receiveShadow>
+            <sphereGeometry args={[1.2, 128, 128]} />
+            <primitive object={material} attach="material" />
         </mesh>
     );
 }
 
-// ── SUB-COMPONENT: BACKGROUND MANAGER ─────────────────────────
-function BackgroundManager({ query }) {
-    const { scene } = useThree();
-    const [hdrUrl, setHdrUrl] = useState(null);
-    const [fallbackUrl, setFallbackUrl] = useState(null);
-    const prevQuery = useRef("");
-
-    useEffect(() => {
-        if (!query || query === prevQuery.current) return;
-        prevQuery.current = query;
-        const lower = query.toLowerCase();
-        let matched = null;
-        for (const [k, v] of Object.entries(HDR_MAP)) {
-            if (lower.includes(k)) { matched = v; break; }
-        }
-
-        if (matched) {
-            setHdrUrl(matched);
-            setFallbackUrl(null);
-        } else {
-            setHdrUrl(null);
-            setFallbackUrl(`https://source.unsplash.com/3840x2160/?${encodeURIComponent(query)}`);
-        }
-    }, [query]);
-
-    useEffect(() => {
-        if (!hdrUrl) return;
-        const { RGBELoader } = require("three/examples/jsm/loaders/RGBELoader.js");
-        new RGBELoader().load(hdrUrl, (texture) => {
-            texture.mapping = THREE.EquirectangularReflectionMapping;
-            scene.background = texture;
-            scene.environment = texture;
-        });
-    }, [hdrUrl, scene]);
-
-    useEffect(() => {
-        if (!fallbackUrl) return;
-        new THREE.TextureLoader().load(fallbackUrl, (texture) => {
-            texture.mapping = THREE.EquirectangularReflectionMapping;
-            texture.colorSpace = THREE.SRGBColorSpace;
-            scene.background = texture;
-            scene.environment = texture;
-        });
-    }, [fallbackUrl, scene]);
-
-    return null;
-}
-
-// ── SUB-COMPONENT: AEGIS AVATAR (Pure Logic + Mesh) ───────────
-const AegisAvatar = forwardRef(({ analyser, isSpeaking, lookTarget }, ref) => {
-    const { scene } = useGLTF(MODEL_URL);
-    const avatarRef = useRef();
-
-    // Movement & Animation State
-    const targetPos = useRef(new THREE.Vector3(0, 0, 0));
-    const targetRot = useRef(new THREE.Quaternion());
-    const prevPos = useRef(new THREE.Vector3(0, 0, 0));
-
-    // Micro-gestures
-    const blinkTimer = useRef(0);
-    const nextBlink = useRef(3);
-    const saccadeTimer = useRef(0);
-    const eyeTarget = useRef({ x: 0, y: 0 });
-    const idleAnimState = useRef({ type: null, timer: 0, active: false });
-
-    // Physics-based spring bones
-    const spring = useRef({
-        hipZ: 0, hipY: 0, spineX: 0, spineZ: 0,
-        ikNeckY: 0, ikNeckX: 0, lArmZ: 0, lArmVel: 0, rArmZ: 0, rArmVel: 0
-    });
-
-    useImperativeHandle(ref, () => ({
-        moveTo(x, y, z) {
-            // Clamp target position to reachable area
-            targetPos.current.set(MathUtils.clamp(x, -3, 3), 0, MathUtils.clamp(z, -2, 2));
-
-            // Calculate rotation to face LookAt(0,0.5,4) typically, or just face forward.
-            // We keep it simple: Face somewhat towards center or camera?
-            // For now, identity is safe, or slight rotation based on X.
-
-            // Strict Rotation Clamp: +/- 45 degrees Y-axis
-            // We'll update targetRot based on position if we want her to turn while moving,
-            // but the prompt specifically asked to "Clamp the Y-axis rotation".
-            // Let's just keep her facing forward mostly, with slight turn towards center.
-            const angle = MathUtils.clamp(-x * 0.1, -Math.PI / 4, Math.PI / 4);
-            targetRot.current.setFromEuler(new THREE.Euler(0, angle, 0));
-        },
-        triggerIdle(type) {
-            idleAnimState.current = { type, timer: 0, active: true };
-        },
-        slowAndLook() {
-            if (avatarRef.current) targetPos.current.lerp(avatarRef.current.position, 0.8);
-        }
-    }));
-
-    // Setup: Beard Purge & Bone Cache
-    const { morphMeshes, bones } = useMemo(() => {
-        const mm = { head: null, teeth: null };
-        const b = {};
-        const boneNames = ["Hips", "Spine", "Spine1", "Spine2", "Neck", "Head", "LeftArm", "RightArm", "LeftForeArm", "RightForeArm", "LeftShoulder", "RightShoulder"];
-
-        scene.traverse((child) => {
-            if (child.isMesh) {
-                child.frustumCulled = false;
-                const n = child.name.toLowerCase();
-                if (n.includes("beard") || n.includes("facial_hair") || n.includes("mustache")) {
-                    child.visible = false;
-                    child.geometry?.dispose();
-                    child.material?.dispose();
-                }
-                if (child.morphTargetDictionary) {
-                    if (n.includes("head") || n.includes("wolf3d_head")) mm.head = child;
-                    else if (n.includes("teeth")) mm.teeth = child;
-                }
-            }
-            if (child.isBone && boneNames.includes(child.name)) b[child.name] = child;
-        });
-        return { morphMeshes: mm, bones: b };
-    }, [scene]);
-
-    const dataArray = useMemo(() => analyser ? new Uint8Array(analyser.frequencyBinCount) : null, [analyser]);
-
-    useFrame((state, delta) => {
-        const t = state.clock.elapsedTime;
-        const dt = Math.min(delta, 0.05);
-        const s = spring.current;
-
-        // 1. POSITION & ROTATION LERP
-        if (avatarRef.current) {
-            prevPos.current.copy(avatarRef.current.position);
-            avatarRef.current.position.lerp(targetPos.current, 0.05);
-            avatarRef.current.quaternion.slerp(targetRot.current, 0.05);
-        }
-        const velX = avatarRef.current ? avatarRef.current.position.x - prevPos.current.x : 0;
-
-        // 2. LIP SYNC & EXPRESSIONS
-        let jawVal = 0, smileVal = 0;
-        if (analyser && dataArray && isSpeaking?.current) {
-            analyser.getByteFrequencyData(dataArray);
-            let sum = 0;
-            for (let i = 0; i < 30; i++) sum += dataArray[i];
-            jawVal = Math.min((sum / 30 / 255) * 2.5, 1.0);
-            smileVal = Math.min((sum / 30 / 255) * 0.5, 0.3);
-        }
-
-        const applyMorph = (mesh, name, val) => {
-            if (!mesh?.morphTargetDictionary) return;
-            const idx = mesh.morphTargetDictionary[name];
-            if (idx !== undefined) mesh.morphTargetInfluences[idx] = MathUtils.lerp(mesh.morphTargetInfluences[idx], val, 0.2);
-        };
-
-        if (morphMeshes.head) {
-            applyMorph(morphMeshes.head, "jawOpen", jawVal);
-            applyMorph(morphMeshes.head, "mouthSmileLeft", smileVal + 0.1);
-            applyMorph(morphMeshes.head, "mouthSmileRight", smileVal + 0.1);
-
-            // Blink
-            blinkTimer.current += dt;
-            if (blinkTimer.current > nextBlink.current) {
-                const blinkPhase = (blinkTimer.current - nextBlink.current) / 0.15;
-                const bv = blinkPhase < 0.5 ? blinkPhase * 2 : (1 - blinkPhase) * 2;
-                applyMorph(morphMeshes.head, "eyeBlinkLeft", Math.max(0, bv));
-                applyMorph(morphMeshes.head, "eyeBlinkRight", Math.max(0, bv));
-                if (blinkTimer.current > nextBlink.current + 0.15) {
-                    blinkTimer.current = 0;
-                    nextBlink.current = 2 + Math.random() * 4;
-                }
-            } else {
-                applyMorph(morphMeshes.head, "eyeBlinkLeft", 0);
-                applyMorph(morphMeshes.head, "eyeBlinkRight", 0);
-            }
-        }
-        if (morphMeshes.teeth) applyMorph(morphMeshes.teeth, "jawOpen", jawVal);
-
-        // 3. BODY PHYSICS (Breathing, Sway, Inertia)
-        // Breathing
-        if (bones.Spine) bones.Spine.rotation.x = Math.sin(t * 2) * 0.02;
-        // Inertia on Hips
-        s.hipZ = MathUtils.lerp(s.hipZ, velX * 3.0, dt * 2);
-        if (bones.Hips) bones.Hips.rotation.z = s.hipZ;
-
-        // 4. IK LOOK-AT
-        let lookX = 0, lookY = 0;
-        if (lookTarget?.current) {
-            lookX = -lookTarget.current.x * 0.5; // Yaw
-            lookY = lookTarget.current.y * 0.3;  // Pitch
-        }
-        s.spineX = MathUtils.lerp(s.spineX, lookX, dt * 3);
-        s.spineZ = MathUtils.lerp(s.spineZ, lookY, dt * 3);
-
-        // Distribute look rotation
-        if (bones.Neck) { bones.Neck.rotation.y = s.spineX * 0.5; bones.Neck.rotation.x = s.spineZ * 0.5; }
-        if (bones.Head) { bones.Head.rotation.y = s.spineX * 0.5; bones.Head.rotation.x = s.spineZ * 0.5; }
-    });
-
-    return <primitive ref={avatarRef} object={scene} position={[0, -1, 0]} />;
-});
-useGLTF.preload(MODEL_URL);
+// ── AEGIS LOGIC MANAGER ───────────────────────────────────────
+// Now a child of the Canvas in WorldRoot, handling only logic and UI overlay portal if needed.
+// However, since UI needs to be outside Canvas, we might need a different approach or portal.
+// For simplicity in this refactor, we will use Html from drei for the UI or just return the mesh here 
+// and manage the logic. The UI text was overlayed in the previous version.
+// To keep it clean: We will assume WorldRoot handles the Canvas, and AegisCore returns the Mesh 
+// BUT we also need the UI. We can use <Html> for the subtitle/status or keep the non-canvas UI in WorldRoot?
+// No, simpler: WorldRoot renders specific UI components if needed, or we use <Html fullscreen> for the UI layer.
+// Actually, let's keep AegisCore as a Logical Component that returns the Sphere and uses `Html` for UI.
 
 
-// ── MAIN COMPONENT: AEGIS CORE ────────────────────────────────
+
 export default function AegisCore() {
     const [status, setStatus] = useState("System Standby");
     const [subtitle, setSubtitle] = useState("");
-    const [bgQuery, setBgQuery] = useState("");
     const [hasStarted, setHasStarted] = useState(false);
 
     // Refs
     const ws = useRef(null);
-    const avatarRef = useRef(null);
     const audioCtx = useRef(null);
     const analyser = useRef(null);
     const gainNode = useRef(null);
-    const isSpeaking = useRef(false);
     const audioWorker = useRef(null);
     const workerCallbacks = useRef({});
     const workerIdCounter = useRef(0);
@@ -264,7 +190,115 @@ export default function AegisCore() {
     const nextStartTime = useRef(0);
     const textBuffer = useRef("");
     const wordTimestamps = useRef([]);
-    const lookTarget = useRef({ x: 0, y: 0 });
+
+    // Core State Refs
+    const targetPos = useRef(new THREE.Vector3(0, 0, 0));
+    const audioLevelRef = useRef(0);
+    // const idleTimer = useRef(0); // Managed via checking lastInteractionTime
+    const lastInteractionTime = useRef(Date.now());
+    const isProcessingIdle = useRef(false);
+
+    // ── LOGIC LOOP (Background-Safe) ─────────────────────────────
+    useEffect(() => {
+        const interval = setInterval(() => {
+            const now = Date.now();
+
+            // 1. Heartbeat
+            if (ws.current?.readyState === WebSocket.OPEN) {
+                ws.current.send(JSON.stringify({ type: "ping" }));
+            }
+
+            // 2. Background Audio Pulse (Keep Alive)
+            if (analyser.current) {
+                const dataArray = new Uint8Array(analyser.current.frequencyBinCount);
+                analyser.current.getByteFrequencyData(dataArray);
+                let sum = 0;
+                for (let i = 0; i < dataArray.length; i++) sum += dataArray[i];
+                const avg = sum / dataArray.length;
+                audioLevelRef.current = Math.min(avg / 128.0, 1.0);
+            }
+
+            // 3. Autonomous Agency & Vision Check
+            if (ws.current?.readyState === WebSocket.OPEN && !isProcessingIdle.current && hasStarted) {
+                if ((now - lastInteractionTime.current > IDLE_TIMEOUT_MS) && status === "Listening...") {
+                    console.log("Triggering Autonomous Action");
+                    isProcessingIdle.current = true;
+                    // Move sphere
+                    triggerRandomMove();
+
+                    // Capture Vision Frame for context
+                    const frame = captureFrame();
+
+                    // Send Idle Trigger with Vision Data
+                    ws.current.send(JSON.stringify({
+                        type: "idle_trigger",
+                        vision: frame
+                    }));
+
+                    lastInteractionTime.current = now;
+                }
+            }
+        }, 1000); // Run logic every second
+
+        return () => clearInterval(interval);
+    }, [hasStarted, status]);
+
+    // ── VISUAL LOOP (RAF - Pauses in Background) ─────────────────
+    useFrame((state) => {
+        // 1. Look At User (Camera)
+        if (mesh.current) {
+            mesh.current.lookAt(state.camera.position);
+
+            // Lerp Position
+            mesh.current.position.lerp(targetPos.current, 0.05);
+
+            // Biological Breathing (Scale Pulse)
+            const breath = Math.sin(state.clock.elapsedTime * 3.14159) * 0.005;
+            const scale = 1.0 + breath + (audioLevelRef.current * 0.1);
+            mesh.current.scale.setScalar(scale);
+        }
+
+        // Audio analysis also happens here for 60fps smoothness when visible
+        if (analyser.current) {
+            const dataArray = new Uint8Array(analyser.current.frequencyBinCount);
+            analyser.current.getByteFrequencyData(dataArray);
+            let sum = 0;
+            for (let i = 0; i < dataArray.length; i++) sum += dataArray[i];
+            const avg = sum / dataArray.length;
+            audioLevelRef.current = Math.min(avg / 128.0, 1.0);
+        }
+    });
+
+
+    const triggerRandomMove = () => {
+        const x = (Math.random() * (MOVEMENT_BOUNDS.x[1] - MOVEMENT_BOUNDS.x[0])) + MOVEMENT_BOUNDS.x[0];
+        const y = (Math.random() * (MOVEMENT_BOUNDS.y[1] - MOVEMENT_BOUNDS.y[0])) + MOVEMENT_BOUNDS.y[0];
+        const z = (Math.random() * (MOVEMENT_BOUNDS.z[1] - MOVEMENT_BOUNDS.z[0])) + MOVEMENT_BOUNDS.z[0];
+        targetPos.current.set(x, y, z);
+    };
+
+    // ── CAMERA & VISION ─────────────────────────────────────────
+    const videoRef = useRef(document.createElement("video"));
+
+    const startCamera = async () => {
+        try {
+            const stream = await navigator.mediaDevices.getUserMedia({ video: { width: 320, height: 240 } });
+            videoRef.current.srcObject = stream;
+            videoRef.current.play();
+        } catch (e) {
+            console.error("Camera access denied:", e);
+        }
+    };
+
+    const captureFrame = () => {
+        if (!videoRef.current || videoRef.current.readyState !== 4) return null;
+        const canvas = document.createElement("canvas");
+        canvas.width = 320;
+        canvas.height = 240;
+        const ctx = canvas.getContext("2d");
+        ctx.drawImage(videoRef.current, 0, 0, 320, 240);
+        return canvas.toDataURL("image/jpeg", 0.5).split(",")[1]; // Return base64 body
+    };
 
     // ── AUDIO & WS LOGIC ────────────────────────────────────────
     const initSystem = useCallback(() => {
@@ -272,7 +306,7 @@ export default function AegisCore() {
         audioCtx.current = new (window.AudioContext || window.webkitAudioContext)();
         audioCtx.current.resume();
         analyser.current = audioCtx.current.createAnalyser();
-        analyser.current.fftSize = 256;
+        analyser.current.fftSize = 512;
         gainNode.current = audioCtx.current.createGain();
         gainNode.current.connect(analyser.current);
         analyser.current.connect(audioCtx.current.destination);
@@ -287,14 +321,11 @@ export default function AegisCore() {
 
         // WebSocket Init
         ws.current = new WebSocket(WS_URL);
-        ws.current.onopen = () => { setStatus("AEGIS Online"); setHasStarted(true); };
+        ws.current.onopen = () => { setStatus("AEGIS Online"); setHasStarted(true); lastInteractionTime.current = Date.now(); };
         ws.current.onmessage = (e) => handleMessage(JSON.parse(e.data));
         ws.current.onclose = () => setStatus("Offline");
 
-        // Heartbeat
-        setInterval(() => {
-            if (ws.current?.readyState === WebSocket.OPEN) ws.current.send(JSON.stringify({ type: "ping" }));
-        }, HEARTBEAT_MS);
+
 
         // Subtitle Loop
         const tick = () => {
@@ -309,27 +340,26 @@ export default function AegisCore() {
         };
         requestAnimationFrame(tick);
 
-        // Microphone / VAD would go here (simplified for consolidation)
+
+
+        startCamera();
         setupSpeechRec();
     }, []);
 
     const handleMessage = (data) => {
+        lastInteractionTime.current = Date.now();
+        isProcessingIdle.current = false; // Reset idle block
+
         switch (data.type) {
             case "text":
-                // Buffer text for subtitle sync
                 textBuffer.current = data.text;
                 break;
             case "audio_chunk":
-                // We'll decode immediately for simplicity in this lean version, or buffer. 
-                // Assuming we get base64 chunks
                 processAudioChunk(data.data, data.sequence_id);
                 break;
-            case "audio_end":
-                // Finalize any sync logic
+            case "move":
+                targetPos.current.set(data.x || 0, data.y || 0, data.z || 0);
                 break;
-            case "change_bg": setBgQuery(data.query); break;
-            case "move": avatarRef.current?.moveTo(data.x || 0, data.y || 0, data.z || 0); break;
-            case "slow_look": avatarRef.current?.slowAndLook(); break;
             case "clear_audio": hardStop(); break;
             default: break;
         }
@@ -338,7 +368,6 @@ export default function AegisCore() {
     const processAudioChunk = async (b64, seqId) => {
         if (!audioCtx.current) return;
         setStatus("Speaking...");
-        isSpeaking.current = true;
 
         // Decode in worker
         const id = ++workerIdCounter.current;
@@ -357,20 +386,18 @@ export default function AegisCore() {
         nextStartTime.current = startAt + audioBuffer.duration;
         activeSourceNodes.current.push(source);
 
-        // Sync subtitles
         if (textBuffer.current) {
             const words = textBuffer.current.split(" ");
             const durPerWord = audioBuffer.duration / words.length;
             words.forEach((w, i) => {
                 wordTimestamps.current.push({ word: w, time: startAt + (durPerWord * i) });
             });
-            textBuffer.current = ""; // consumed
+            textBuffer.current = "";
         }
 
         source.onended = () => {
             activeSourceNodes.current = activeSourceNodes.current.filter(n => n !== source);
             if (activeSourceNodes.current.length === 0) {
-                isSpeaking.current = false;
                 setStatus("Listening...");
                 setTimeout(() => setSubtitle(""), 2000);
             }
@@ -383,7 +410,6 @@ export default function AegisCore() {
         nextStartTime.current = 0;
         wordTimestamps.current = [];
         setSubtitle("");
-        isSpeaking.current = false;
     };
 
     const setupSpeechRec = () => {
@@ -398,58 +424,44 @@ export default function AegisCore() {
             if (res.isFinal) {
                 ws.current?.send(JSON.stringify({ type: "message", message: res[0].transcript }));
                 setStatus("Thinking...");
-                setSubtitle(""); // Clear previous subs
+                setSubtitle("");
+                lastInteractionTime.current = Date.now();
             }
         };
         rec.start();
     };
 
-    // ── RENDER ──────────────────────────────────────────────────
     return (
-        <div className="App" onClick={() => audioCtx.current?.resume()}>
-            {!hasStarted && (
-                <div className="start-overlay" onClick={initSystem} style={{
-                    position: "absolute", zIndex: 100, inset: 0, background: "rgba(0,0,0,0.8)",
-                    display: "flex", alignItems: "center", justifyContent: "center", color: "white", cursor: "pointer"
-                }}>
-                    <h1>CLICK TO INITIALIZE AEGIS</h1>
+        <group>
+            {/* UI Layer via Html */}
+            <Html fullscreen style={{ pointerEvents: 'none', width: '100vw', height: '100vh' }}>
+                <div style={{ position: 'relative', width: '100%', height: '100%' }}>
+                    {!hasStarted && (
+                        <div onClick={initSystem} style={{
+                            position: "absolute", zIndex: 100, inset: 0, background: "rgba(0,0,0,0.8)",
+                            display: "flex", alignItems: "center", justifyContent: "center", pointerEvents: "auto", cursor: "pointer"
+                        }}>
+                            <h1 style={{ color: "white", fontFamily: "monospace" }}>CLICK TO INITIALIZE SOVEREIGN CORE</h1>
+                        </div>
+                    )}
+
+                    <div style={{ position: "absolute", zIndex: 10, top: 20, left: 20, color: "#00ffaa", textShadow: "0 0 10px #00ffaa", fontFamily: "monospace" }}>
+                        <h3>STATUS: {status}</h3>
+                    </div>
+
+                    {subtitle && (
+                        <div style={{
+                            position: "absolute", bottom: "10%", width: "100%", textAlign: "center",
+                            zIndex: 10, color: "#cecece", fontSize: "1.5rem", fontFamily: "monospace", textShadow: "0 2px 4px black"
+                        }}>
+                            {subtitle}
+                        </div>
+                    )}
                 </div>
-            )}
+            </Html>
 
-            <div className="ui-layer" style={{ position: "absolute", zIndex: 10, padding: 20, color: "cyan", textShadow: "0 0 10px cyan" }}>
-                <h3>{status}</h3>
-            </div>
-
-            {subtitle && (
-                <div className="subtitle-layer" style={{
-                    position: "absolute", bottom: "10%", width: "100%", textAlign: "center",
-                    zIndex: 10, color: "white", fontSize: "2rem", textShadow: "0 2px 4px black", pointerEvents: "none"
-                }}>
-                    {subtitle}
-                </div>
-            )}
-
-            <Canvas shadows camera={{ position: [0, 1.4, 4], fov: 45 }} style={{ background: "#111" }}>
-                <fog attach="fog" args={["#111", 5, 20]} />
-                <ambientLight intensity={0.5} />
-                <spotLight position={[5, 10, 5]} angle={0.5} penumbra={1} intensity={1} castShadow />
-
-                <Physics gravity={[0, -9.8, 0]}>
-                    <Suspense fallback={null}>
-                        <AegisAvatar
-                            ref={avatarRef}
-                            analyser={analyser.current}
-                            isSpeaking={isSpeaking}
-                            lookTarget={lookTarget}
-                        />
-                        <PhysicsFloor />
-                    </Suspense>
-                </Physics>
-
-                <ContactShadows scale={20} blur={2} far={4} color="#000" opacity={0.7} />
-                <BackgroundManager query={bgQuery} />
-                <OrbitControls target={[0, 1, 0]} maxPolarAngle={Math.PI / 1.8} enableZoom={false} enablePan={false} />
-            </Canvas>
-        </div>
+            {/* The Sphere */}
+            <FluidSphere audioLevelRef={audioLevelRef} targetPos={targetPos} />
+        </group>
     );
 }
