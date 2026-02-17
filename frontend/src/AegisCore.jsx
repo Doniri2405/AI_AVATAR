@@ -5,7 +5,7 @@ import * as THREE from "three";
 import "./style.css";
 
 // ── CONFIGURATION ─────────────────────────────────────────────
-const WS_URL = "ws://127.0.0.1:8000/ws/chat/";
+const WS_URL = process.env.REACT_APP_WS_URL || "ws://127.0.0.1:8000/ws/chat/";
 const HEARTBEAT_MS = 10000;
 const IDLE_TIMEOUT_MS = 15000; // 15s idle timer as requested
 const MOVEMENT_BOUNDS = { x: [-3, 3], y: [-1, 1], z: [-2, 2] };
